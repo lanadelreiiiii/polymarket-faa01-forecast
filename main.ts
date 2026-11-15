@@ -65,6 +65,17 @@ function stdOf(a: number[]): number {
   return Math.sqrt(a.reduce((s, v) => s + (v - m) * (v - m), 0) / a.length);
 }
 
+/** Per-market sigma from 1-min returns: scaled std of the last 240, floored by
+ *  jump frequency (share of the last 720 returns with |r| > 0.005), capped. */
+function marketSigma(rets: number[]): number {
+  const sig240 = stdOf(rets.slice(-240));
+  const r720 = rets.slice(-720);
+  let jumps = 0;
+  for (const r of r720) if (Math.abs(r) > 0.005) jumps++;
+  const jumpFrac5 = r720.length === 0 ? 0 : jumps / r720.length;
+  return Math.min(SIGMA_CAP, Math.max(VOL_SCALE * sig240, JUMP_FLOOR * jumpFrac5));
+}
+
 function forecast(m: CaseMarket, horizon: number): number[][] {
   const prices = m.prices;
   if (prices.length === 0) throw new Error(`market ${m.id} has no prices`);
@@ -75,14 +86,9 @@ function forecast(m: CaseMarket, horizon: number): number[][] {
   const rets: number[] = [];
   for (let i = 1; i < n; i++) rets.push((prices[i] as number) - (prices[i - 1] as number));
 
-  // Per-market volatility: std of the last 240 returns, scaled down.
-  const sig240 = stdOf(rets.slice(-240));
-  // Jump frequency: share of the last 720 returns larger than 0.005 in magnitude.
-  const r720 = rets.slice(-720);
-  let jumps = 0;
-  for (const r of r720) if (Math.abs(r) > 0.005) jumps++;
-  const jumpFrac5 = r720.length === 0 ? 0 : jumps / r720.length;
-  const sigma = Math.min(SIGMA_CAP, Math.max(VOL_SCALE * sig240, JUMP_FLOOR * jumpFrac5));
+  // Per-market volatility: std of the last 240 returns, scaled down, with a
+  // floor from jump frequency (see marketSigma).
+  const sigma = marketSigma(rets);
 
   // Short-term drift (last 60 minutes) — it reverses, so the median leans against it.
   const drift60 = x - (prices[Math.max(0, n - 61)] as number);
